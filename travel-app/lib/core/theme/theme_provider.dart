@@ -1,0 +1,31 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:voyageur/core/storage/local_storage.dart';
+
+final themeModeProvider =
+    StateNotifierProvider<ThemeModeNotifier, ThemeMode>((ref) {
+  return ThemeModeNotifier();
+});
+
+class ThemeModeNotifier extends StateNotifier<ThemeMode> {
+  ThemeModeNotifier() : super(ThemeMode.light) {
+    _load();
+  }
+
+  Future<void> _load() async {
+    final prefs = await SharedPreferences.getInstance();
+    final storage = LocalStorage(prefs);
+    state = storage.isDarkMode ? ThemeMode.dark : ThemeMode.light;
+  }
+
+  Future<void> toggle() async {
+    final prefs = await SharedPreferences.getInstance();
+    final storage = LocalStorage(prefs);
+    final nowDark = state == ThemeMode.dark;
+    await storage.setDarkMode(!nowDark);
+    state = nowDark ? ThemeMode.light : ThemeMode.dark;
+  }
+
+  bool get isDark => state == ThemeMode.dark;
+}
