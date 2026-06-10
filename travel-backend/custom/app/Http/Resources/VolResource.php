@@ -24,6 +24,9 @@ class VolResource extends JsonResource
             ]),
             // ✅ ville_depart — ajouté par migration add_ville_depart_to_vols_table
             'ville_depart'       => $this->ville_depart,
+            // ✅ escale — null pour les vols directs, objet JSON pour les
+            //    vols avec correspondance (New York via Paris, Dubaï via Le Caire…)
+            'escale'             => $this->escale,   // cast 'array' → JSON object côté Flutter
             'date_depart'        => $this->date_depart?->toIso8601String(),
             'date_arrivee'       => $this->date_arrivee?->toIso8601String(),
             'prix'               => (float) $this->prix,
