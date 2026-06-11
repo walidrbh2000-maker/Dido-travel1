@@ -9,21 +9,15 @@ use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\DB;
 
 /**
- * ⚠️  PRÉREQUIS MIGRATION — avant d'exécuter ce seeder, la colonne `escale`
- *     doit exister dans la table `vols` :
- *
- *     Schema::table('vols', function (Blueprint $table) {
- *         $table->json('escale')->nullable()->after('ville_depart');
- *     });
- *
- * Génère trois catégories de vols :
+ * Génère quatre catégories de vols :
  *   1. Domestiques  Alger → Ville  (DOMESTIC_ROUTES)
- *   2. Domestiques  Ville → Alger  (routes inverses, ville_depart = ville)
+ *   2. Domestiques  Ville → Alger  (routes inverses)
  *   3. Internationaux Alger → Destination (INTERNATIONAL_ROUTES)
+ *   4. Internationaux Hubs régionaux → Destination (INTERNATIONAL_HUBS)
  *
- * Les vols long-courriers définis dans ESCALE_MAP reçoivent automatiquement
- * un objet JSON `escale` contenant : ville, arrivee_escale, depart_escale,
- * duree_transit_min.
+ * Hubs régionaux ayant un aéroport international réel :
+ *   Oran (Ahmed Ben Bella), Constantine (Mohamed Boudiaf),
+ *   Annaba (Rabah Bitat), Tlemcen (Zenata)
  */
 class VolSeeder extends Seeder
 {
@@ -44,11 +38,20 @@ class VolSeeder extends Seeder
     ];
 
     /**
+     * Villes algériennes disposant d'un aéroport international opérationnel.
+     * Ces villes génèrent des vols directs vers les destinations internationales
+     * (1 vol/jour, trafic inférieur à Alger).
+     */
+    private const INTERNATIONAL_HUBS = [
+        'Oran',
+        'Constantine',
+        'Annaba',
+        'Tlemcen',
+    ];
+
+    /**
      * Routes domestiques — direction Alger → ville.
      * Format : [destination_name, durée_h, prix_min_DZD, prix_max_DZD, vols/jour]
-     *
-     * Les mêmes données sont réutilisées pour générer les routes inverses
-     * (ville → Alger) avec ville_depart = destination_name.
      */
     private const DOMESTIC_ROUTES = [
         ['Oran',        1.0, 4_500,  12_000, 3],
@@ -62,7 +65,7 @@ class VolSeeder extends Seeder
     ];
 
     /**
-     * Routes internationales — toutes au départ d'Alger (ALG).
+     * Routes internationales — au départ d'Alger (ALG).
      * Format : [destination_name, durée_h, prix_min_DZD, prix_max_DZD, vols/jour]
      */
     private const INTERNATIONAL_ROUTES = [
@@ -82,26 +85,14 @@ class VolSeeder extends Seeder
 
     /**
      * Escales pour les vols long-courriers (uniquement depuis Alger).
-     *
-     * Clé    : nom de la destination finale (= $route[0] dans INTERNATIONAL_ROUTES)
-     * ville  : ville d'escale
-     * transit_min : durée de l'escale en minutes
-     * leg1_fraction : fraction du temps de vol pur avant l'escale
-     *                 (ex. 0.333 → Alger→Paris ≈ 3.5h sur 10.5h de vol)
-     *
-     * La colonne `date_arrivee` enregistre l'arrivée FINALE (vol + escale).
-     * Le JSON `escale` contient les horaires exacts de passage.
+     * Les hubs régionaux n'ont pas d'escale — vols directs uniquement.
      */
     private const ESCALE_MAP = [
-        // New York (10.5h de vol) → escale à Paris-CDG, transit 2h
-        // Alger → Paris ≈ 3.5h (33 %), Paris → New York ≈ 7h
         'New York' => [
             'ville'         => 'Paris',
             'transit_min'   => 120,
             'leg1_fraction' => 0.333,
         ],
-        // Dubaï (6.5h) → escale au Caire, transit 1h30
-        // Alger → Le Caire ≈ 3h (46 %), Le Caire → Dubaï ≈ 3.5h
         'Dubaï' => [
             'ville'         => 'Le Caire',
             'transit_min'   => 90,
@@ -124,21 +115,23 @@ class VolSeeder extends Seeder
             return;
         }
 
-        $destinations  = Destination::all()->keyBy('name');
-        $algerDest     = $destinations->get('Alger');
+        $destinations = Destination::all()->keyBy('name');
+        $algerDest    = $destinations->get('Alger');
 
         if (! $algerDest) {
             $this->command->error('❌  Destination "Alger" introuvable — lancez d\'abord DestinationSeeder.');
             return;
         }
 
-        $totalRoutes = count(self::DOMESTIC_ROUTES) * 2 // aller + retour
-                     + count(self::INTERNATIONAL_ROUTES);
+        $hubCount    = count(self::INTERNATIONAL_HUBS);
+        $totalRoutes = count(self::DOMESTIC_ROUTES) * 2
+                     + count(self::INTERNATIONAL_ROUTES) * (1 + $hubCount);
 
         $this->command->info(sprintf(
-            '✈️  Génération des vols pour %d jours (%d routes)…',
+            '✈️  Génération des vols pour %d jours (%d routes — %d hubs régionaux)…',
             self::TOTAL_DAYS,
-            $totalRoutes
+            $totalRoutes,
+            $hubCount
         ));
 
         $now           = Carbon::now()->startOfDay();
@@ -160,14 +153,9 @@ class VolSeeder extends Seeder
 
             // ── 2. Domestiques : ville → Alger (routes inverses) ──────────
             foreach (self::DOMESTIC_ROUTES as $route) {
-                // Destination = Alger ; ville_depart = $route[0]
                 for ($f = 0; $f < $route[4]; $f++) {
                     $chunk[] = $this->buildRow(
-                        $algerDest->id,
-                        $date,
-                        $route,
-                        $f,
-                        $route[0] // ex. 'Oran'
+                        $algerDest->id, $date, $route, $f, $route[0]
                     );
                 }
             }
@@ -179,6 +167,25 @@ class VolSeeder extends Seeder
 
                 for ($f = 0; $f < $route[4]; $f++) {
                     $chunk[] = $this->buildRow($dest->id, $date, $route, $f, 'Alger');
+                }
+            }
+
+            // ── 4. Internationaux : Hubs régionaux → destination ──────────
+            // Uniquement les villes dotées d'un aéroport international réel :
+            // Oran, Constantine, Annaba, Tlemcen.
+            // 1 vol/jour par hub (trafic inférieur à Alger).
+            // Pas d'escale pour ces vols (vols directs).
+            foreach (self::INTERNATIONAL_HUBS as $hubName) {
+                $hubDest = $destinations->get($hubName);
+                if (! $hubDest) continue;
+
+                foreach (self::INTERNATIONAL_ROUTES as $route) {
+                    $dest = $destinations->get($route[0]);
+                    if (! $dest) continue;
+
+                    // Slot décalé de +6 pour éviter les doublons d'horaire
+                    // avec les vols au départ d'Alger.
+                    $chunk[] = $this->buildRow($dest->id, $date, $route, 6, $hubName);
                 }
             }
 
@@ -218,25 +225,20 @@ class VolSeeder extends Seeder
     ): array {
         [, $durationHours, $minPrice, $maxPrice] = $route;
 
-        // ── Calcul de l'escale (uniquement pour les vols au départ d'Alger) ──
+        // Escale uniquement pour les vols au départ d'Alger
         $routeDestName = $route[0];
         $escaleConfig  = ($villeDepart === 'Alger')
             ? (self::ESCALE_MAP[$routeDestName] ?? null)
             : null;
 
-        $transitMin  = $escaleConfig ? $escaleConfig['transit_min'] : 0;
-        $flightMin   = (int) round($durationHours * 60);
-        $totalMin    = $flightMin + $transitMin; // vol pur + temps d'escale
+        $transitMin = $escaleConfig ? $escaleConfig['transit_min'] : 0;
+        $flightMin  = (int) round($durationHours * 60);
+        $totalMin   = $flightMin + $transitMin;
 
-        // ── Horaires ─────────────────────────────────────────────────────────
         $slot        = self::DEPARTURE_SLOTS[$slotIdx % count(self::DEPARTURE_SLOTS)];
         $departureAt = Carbon::parse($date->toDateString() . ' ' . $slot);
         $arrivalAt   = $departureAt->copy()->addMinutes($totalMin);
 
-        // ── JSON escale ───────────────────────────────────────────────────────
-        // arrivee_escale = départ + (fraction du vol pur avant l'escale)
-        // depart_escale  = arrivee_escale + transit
-        // Les deux timestamps sont en UTC (comme toutes les autres dates).
         $escaleJson = null;
         if ($escaleConfig !== null) {
             $leg1Min    = (int) round($flightMin * $escaleConfig['leg1_fraction']);
@@ -251,12 +253,10 @@ class VolSeeder extends Seeder
             ], JSON_UNESCAPED_UNICODE);
         }
 
-        // ── Compagnie & numéro de vol ─────────────────────────────────────────
         $airlineNames = array_keys(self::AIRLINES);
         $airlineName  = $airlineNames[array_rand($airlineNames)];
         $iata         = self::AIRLINES[$airlineName];
 
-        // ── Tarif (modulé selon la classe) ────────────────────────────────────
         $classe    = $this->drawClasse();
         $basePrice = random_int($minPrice, $maxPrice);
         $prix      = round(match ($classe) {
@@ -272,7 +272,7 @@ class VolSeeder extends Seeder
             'numero_vol'         => $iata . random_int(100, 9999),
             'destination_id'     => $destId,
             'ville_depart'       => $villeDepart,
-            'escale'             => $escaleJson,          // null ou JSON string
+            'escale'             => $escaleJson,
             'date_depart'        => $departureAt->format('Y-m-d H:i:s'),
             'date_arrivee'       => $arrivalAt->format('Y-m-d H:i:s'),
             'prix'               => $prix,
@@ -284,7 +284,6 @@ class VolSeeder extends Seeder
         ];
     }
 
-    /** Tire aléatoirement une classe selon la distribution réelle du marché. */
     private function drawClasse(): string
     {
         $n = random_int(1, 100);
