@@ -10,7 +10,7 @@ class DatabaseSeeder extends Seeder
 {
     public function run(): void
     {
-        // ── Compte admin — idempotent (safe même après migrate:fresh) ──
+        // ── Compte admin — idempotent (safe même après migrate:fresh) ──────────
         User::firstOrCreate(
             ['email' => 'admin@travelapp.com'],
             [
@@ -20,13 +20,13 @@ class DatabaseSeeder extends Seeder
             ]
         );
 
-        // ── Données de référence puis données générées ──────────────────
+        // ── Données de référence puis données générées ──────────────────────────
         // Chaque seeder vérifie lui-même si les tables sont déjà remplies.
         $this->call([
-            DestinationSeeder::class,   // 1. villes (référence)
+            DestinationSeeder::class,   // 1. villes (référence — Alger en premier)
             VolSeeder::class,            // 2. 60 jours de vols (dépend des destinations)
             HotelSeeder::class,          // 3. hôtels par destination
-            GuideSeeder::class,          // 4. guides par destination (dépend des destinations)
+            GuideSeeder::class,          // 4. guides par destination
         ]);
     }
 }
