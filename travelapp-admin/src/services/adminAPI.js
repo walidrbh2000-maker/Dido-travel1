@@ -150,7 +150,6 @@ const adminAPI = {
   // ── Destinations ─────────────────────────────────────────────────────────────
   async getDestinations(params = {}) {
     const data = await request('GET', `/destinations?${qs(params)}`);
-    // Normalise : { data: [...] } ou directement [...]
     return Array.isArray(data) ? { data } : data;
   },
   async createDestination(body) {
@@ -213,6 +212,20 @@ const adminAPI = {
   // pas seulement celles de l'admin connecté.
   async getReservations(params = {}) {
     const data = await request('GET', `/admin/reservations?${qs(params)}`);
+    return Array.isArray(data) ? { data } : data;
+  },
+
+  // ── Ajouts pour le dashboard analytique ──────────────────────────────────────
+
+  // Toutes les réservations (volume élevé pour les calculs analytiques)
+  async getReservationsAll() {
+    const data = await request('GET', '/admin/reservations?per_page=500');
+    return Array.isArray(data) ? { data } : data;
+  },
+
+  // Tous les vols (volume élevé pour taux d'occupation + prochains départs)
+  async getVolsAll() {
+    const data = await request('GET', '/vols?per_page=500');
     return Array.isArray(data) ? { data } : data;
   },
 };
